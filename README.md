@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🔢 Simple Digit Recognizer
 
 A clean, simple machine learning project for recognizing handwritten digits (0-9).
@@ -108,3 +109,6 @@ This project demonstrates:
 ---
 
 **Simple, Clean, Effective! 🎉** 
+=======
+# Digit_recognizer
+>>>>>>> 5f7322384f65d61283c76bcf1cd6df67ff20bd9f
