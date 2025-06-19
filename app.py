@@ -1,6 +1,6 @@
 """
-Simple Digit Recognizer App
-A clean Streamlit interface for digit recognition
+Simple Digit Recognizer App with Pickle Support
+A clean Streamlit interface for digit recognition with fast model loading
 """
 
 import streamlit as st
@@ -23,23 +23,48 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize session state
+if 'recognizer' not in st.session_state:
+    st.session_state['recognizer'] = None
+if 'models_loaded' not in st.session_state:
+    st.session_state['models_loaded'] = False
+
 # Title
 st.title("🔢 Simple Digit Recognizer")
-st.markdown("A clean, simple interface for recognizing handwritten digits (0-9)")
+st.markdown("A clean, simple interface for recognizing handwritten digits (0-9) with fast model loading!")
 
 # Sidebar
 st.sidebar.header("Settings")
-test_size = st.sidebar.slider("Test Size", 0.1, 0.5, 0.2, 0.05)
-st.sidebar.markdown("**Model:** Multi-Layer Perceptron (MLP) + CNN")
-st.sidebar.markdown("**Dataset:** MNIST")
 
-# Training samples selector
-n_samples = st.sidebar.selectbox(
-    "Training Samples",
-    [10000, 30000, 50000, 70000],
-    index=1,
-    help="More samples = better accuracy but slower training"
-)
+# Check if models exist
+models_exist = os.path.exists('models') and os.path.exists('models/mlp_model.pkl') and os.path.exists('models/cnn_model.pkl')
+
+if models_exist:
+    st.sidebar.success("✅ Pre-trained models found!")
+    st.sidebar.markdown("**Models ready for instant use**")
+else:
+    st.sidebar.warning("⚠️ No pre-trained models found")
+    st.sidebar.markdown("**Need to train models first**")
+
+# Training settings (only show if no models exist or force retrain)
+with st.sidebar.expander("🔧 Training Settings", expanded=not models_exist):
+    test_size = st.slider("Test Size", 0.1, 0.5, 0.2, 0.05)
+    
+    # Training samples selector
+    n_samples = st.selectbox(
+        "Training Samples",
+        [10000, 30000, 50000, 70000],
+        index=1,
+        help="More samples = better accuracy but slower training"
+    )
+    
+    force_retrain = st.checkbox("Force Retrain Models", value=False, 
+                               help="Check this to retrain even if models exist")
+
+st.sidebar.markdown("**Model Architecture:**")
+st.sidebar.markdown("- **MLP:** Multi-Layer Perceptron (128, 64 neurons)")
+st.sidebar.markdown("- **CNN:** Convolutional Neural Network")
+st.sidebar.markdown("- **Dataset:** MNIST")
 
 st.sidebar.markdown("**Prediction Model:**")
 pred_model = st.sidebar.radio("Choose model for prediction:", ["MLP", "CNN"], index=1)
@@ -48,7 +73,28 @@ pred_model = st.sidebar.radio("Choose model for prediction:", ["MLP", "CNN"], in
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    if st.button("🚀 Start Training", type="primary"):
+    # Quick Load Button (if models exist)
+    if models_exist and not st.session_state['models_loaded']:
+        if st.button("⚡ Quick Load Models", type="primary"):
+            with st.spinner("Loading pre-trained models..."):
+                try:
+                    recognizer = SimpleDigitRecognizer(test_size=test_size, n_samples=n_samples)
+                    models_loaded = recognizer.load_models()
+                    
+                    if models_loaded:
+                        st.session_state['recognizer'] = recognizer
+                        st.session_state['models_loaded'] = True
+                        st.success(f"🎉 Models loaded successfully! ({', '.join(models_loaded)})")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to load models")
+                        
+                except Exception as e:
+                    st.error(f"Loading failed: {str(e)}")
+    
+    # Training Button
+    train_button_text = "🔄 Retrain Models" if models_exist else "🚀 Train Models"
+    if st.button(train_button_text, type="secondary" if models_exist else "primary"):
         with st.spinner("Initializing..."):
             recognizer = SimpleDigitRecognizer(test_size=test_size, n_samples=n_samples)
             
@@ -74,37 +120,63 @@ with col1:
             # Train CNN
             status_text.text("Training CNN (Convolutional Neural Network)...")
             recognizer.train_cnn(epochs=15, batch_size=128)
-            progress_bar.progress(90)
+            progress_bar.progress(85)
+            
+            # Save models
+            status_text.text("Saving models as pickle files...")
+            recognizer.save_models()
+            progress_bar.progress(95)
             
             # Evaluate models
             status_text.text("Evaluating models...")
             results = recognizer.evaluate_models()
             progress_bar.progress(100)
             
-            st.success("🎉 Training completed!")
+            st.success("🎉 Training completed and models saved!")
             st.session_state['recognizer'] = recognizer
             st.session_state['results'] = results
+            st.session_state['models_loaded'] = True
             
         except Exception as e:
             st.error(f"Training failed: {str(e)}")
             st.stop()
 
 with col2:
-    if 'results' in st.session_state:
-        results = st.session_state['results']
-        st.header("📊 Results")
+    if st.session_state['models_loaded'] and st.session_state['recognizer']:
+        recognizer = st.session_state['recognizer']
         
-        if 'MLP' in results:
-            st.metric(label="MLP Accuracy", value=f"{results['MLP']['accuracy']:.4f}")
-        if 'CNN' in results:
-            st.metric(label="CNN Accuracy", value=f"{results['CNN']['accuracy']:.4f}")
+        # Show quick model info
+        st.header("🤖 Model Status")
+        st.success("Models Ready!")
+        
+        available_models = list(recognizer.models.keys())
+        for model in available_models:
+            st.write(f"✅ {model} loaded")
+        
+        # Quick evaluation if data is available
+        if hasattr(recognizer, 'X_test') and recognizer.X_test is not None:
+            if st.button("📊 Evaluate Models", type="secondary"):
+                with st.spinner("Evaluating..."):
+                    results = recognizer.evaluate_models()
+                    st.session_state['results'] = results
 
-# Display detailed results if training is done
+# Display detailed results if available
 if 'results' in st.session_state:
     results = st.session_state['results']
     recognizer = st.session_state['recognizer']
     
-    # Metrics table
+    st.header("📊 Model Performance")
+    
+    # Metrics display
+    col1, col2 = st.columns(2)
+    with col1:
+        if 'MLP' in results:
+            st.metric(label="🧠 MLP Accuracy", value=f"{results['MLP']['accuracy']:.4f}")
+    with col2:
+        if 'CNN' in results:
+            st.metric(label="🔥 CNN Accuracy", value=f"{results['CNN']['accuracy']:.4f}")
+    
+    # Detailed metrics table
     st.subheader("Detailed Metrics")
     metrics_data = []
     for name in ["MLP", "CNN"]:
@@ -130,81 +202,85 @@ if 'results' in st.session_state:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Sample Images")
-        fig = recognizer.plot_sample_images()
-        st.pyplot(fig)
-        plt.close()
+        if st.button("🔄 Show Random Samples"):
+            fig = recognizer.plot_sample_images()
+            if fig:
+                st.pyplot(fig)
+                plt.close()
     
     with col2:
         st.subheader("Class Distribution")
-        fig = recognizer.plot_class_distribution()
-        st.pyplot(fig)
-        plt.close()
-    
-    # Save model
-    st.header("💾 Save Models")
-    if st.button("Save Trained Models"):
-        recognizer.save_models()
-        st.success("Models saved to 'models/' directory!")
+        if st.button("📊 Show Distribution"):
+            fig = recognizer.plot_class_distribution()
+            if fig:
+                st.pyplot(fig)
+                plt.close()
+
+# Separator
+st.markdown("---")
 
 # --- Drawing Canvas Section ---
 st.header("🎨 Draw a Digit and Predict!")
-st.markdown("""
-Draw a digit (0-9) in the canvas below and click **Predict** to see what the model thinks! 
 
-**Tips for better predictions:**
-- Draw thick, clear digits
-- Center your digit in the canvas
-- Use the full height/width of the canvas
-- Make sure your digit is connected (no broken lines)
-""")
+# Only show prediction interface if models are loaded
+if not st.session_state['models_loaded']:
+    st.warning("⚠️ Please load or train models first to use the prediction feature.")
+    st.info("💡 Click 'Quick Load Models' if you have pre-trained models, or 'Train Models' to create new ones.")
+else:
+    st.markdown("""
+    Draw a digit (0-9) in the canvas below and click **Predict** to see what the model thinks! 
 
-col1, col2 = st.columns([1, 2])
+    **Tips for better predictions:**
+    - Draw thick, clear digits
+    - Center your digit in the canvas
+    - Use the full height/width of the canvas
+    - Make sure your digit is connected (no broken lines)
+    """)
 
-with col1:
-    st.subheader("Draw Here:")
-    canvas_result = st_canvas(
-        fill_color="rgba(0,0,0,0)",  # Transparent fill
-        stroke_width=20,  # Thicker stroke
-        stroke_color="#000000",
-        background_color="#FFFFFF",
-        height=280,
-        width=280,
-        drawing_mode="freedraw",
-        key="canvas",
-        display_toolbar=True,
-    )
-    st.caption("💡 Use thick strokes and center your digit for best results!")
+    col1, col2 = st.columns([1, 2])
 
-with col2:
-    st.subheader("Preview & Predict")
-    
-    if canvas_result.image_data is not None:
-        # Show original drawing
-        st.image(canvas_result.image_data, width=140, caption="Your Drawing")
+    with col1:
+        st.subheader("Draw Here:")
+        canvas_result = st_canvas(
+            fill_color="rgba(0,0,0,0)",  # Transparent fill
+            stroke_width=20,  # Thicker stroke
+            stroke_color="#000000",
+            background_color="#FFFFFF",
+            height=280,
+            width=280,
+            drawing_mode="freedraw",
+            key="canvas",
+            display_toolbar=True,
+        )
+        st.caption("💡 Use thick strokes and center your digit for best results!")
+
+    with col2:
+        st.subheader("Preview & Predict")
         
-        # Improved preprocessing
-        img = Image.fromarray(canvas_result.image_data.astype('uint8')).convert('L')
-        
-        # Invert colors (white background, black digit -> black background, white digit)
-        img = ImageOps.invert(img)
-        
-        # Apply slight blur to smooth the drawing
-        img = img.filter(ImageFilter.GaussianBlur(radius=1))
-        
-        # Resize to 28x28 with good resampling
-        img = img.resize((28, 28), Image.Resampling.LANCZOS)
-        
-        # Convert to array and normalize
-        img_array = np.array(img).astype(np.float32) / 255.0
-        
-        # Show processed image
-        processed_img_display = (img_array * 255).astype(np.uint8)
-        st.image(processed_img_display, width=140, caption="Processed (28x28)")
-        
-        if st.button("🔮 Predict", key="predict_canvas", type="primary"):
-            if 'recognizer' not in st.session_state:
-                st.warning("⚠️ Please train the models first using 'Start Training' above.")
-            else:
+        if canvas_result.image_data is not None:
+            # Show original drawing
+            st.image(canvas_result.image_data, width=140, caption="Your Drawing")
+            
+            # Improved preprocessing
+            img = Image.fromarray(canvas_result.image_data.astype('uint8')).convert('L')
+            
+            # Invert colors (white background, black digit -> black background, white digit)
+            img = ImageOps.invert(img)
+            
+            # Apply slight blur to smooth the drawing
+            img = img.filter(ImageFilter.GaussianBlur(radius=1))
+            
+            # Resize to 28x28 with good resampling
+            img = img.resize((28, 28), Image.Resampling.LANCZOS)
+            
+            # Convert to array and normalize
+            img_array = np.array(img).astype(np.float32) / 255.0
+            
+            # Show processed image
+            processed_img_display = (img_array * 255).astype(np.uint8)
+            st.image(processed_img_display, width=140, caption="Processed (28x28)")
+            
+            if st.button("🔮 Predict", key="predict_canvas", type="primary"):
                 recognizer = st.session_state['recognizer']
                 
                 with st.spinner("Predicting..."):
@@ -266,53 +342,8 @@ with col2:
                         st.warning("⚠️ Low confidence prediction. Try redrawing the digit more clearly.")
                         
                 else:
-                    st.warning(f"❌ {pred_model} model is not trained yet.")
-    else:
-        st.info("👆 Draw a digit on the canvas to get started!")
+                    st.warning(f"❌ {pred_model} model is not available.")
+        else:
+            st.info("👆 Draw a digit on the canvas to get started!")
 
 # Instructions
-st.sidebar.header("📋 Instructions")
-st.sidebar.markdown("""
-1. **Start Training**: Click to train both MLP and CNN models
-2. **View Results**: See model performance and accuracy metrics
-3. **Draw Digits**: Use the canvas to draw and predict digits
-4. **Choose Model**: Select MLP or CNN for predictions
-
-**Drawing Tips:**
-- Use thick, bold strokes
-- Center your digit
-- Make digits large and clear
-- Ensure lines are connected
-""")
-
-# About
-st.sidebar.header("ℹ️ About")
-st.sidebar.markdown("""
-This app uses machine learning to recognize handwritten digits:
-
-- **MLP**: Multi-Layer Perceptron with 2 hidden layers
-- **CNN**: Convolutional Neural Network with batch normalization
-- **Dataset**: MNIST (handwritten digits)
-- **Preprocessing**: Image centering, normalization, and smoothing
-
-**Improvements made:**
-- Better image preprocessing
-- Improved CNN architecture
-- Enhanced training parameters
-- Better digit centering algorithm
-""")
-
-# Performance tips
-with st.sidebar.expander("🚀 Performance Tips"):
-    st.markdown("""
-    **For better accuracy:**
-    - Use 30,000+ training samples
-    - Train for more epochs (CNN)
-    - Draw digits clearly and boldly
-    - Center digits in canvas
-    
-    **For faster training:**
-    - Use 10,000 samples
-    - Reduce epochs to 5-10
-    - Use smaller batch sizes
-    """)
